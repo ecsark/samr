@@ -35,7 +35,7 @@ FIELDS = InquirerLexEntry._fields
 
 class InquirerLexTransform(StatelessTransform):
     _corpus = []
-    _use_fields = [FIELDS.index(x) for x in "Positiv Negativ IAV Strong".split()]
+    _use_fields = [FIELDS.index(x) for x in "Positiv Negativ IAV SV Strong".split()]
 
     def transform(self, X, y=None):
         """
@@ -44,6 +44,7 @@ class InquirerLexTransform(StatelessTransform):
         words "Positiv_Positiv", "Negativ_Negativ", "IAV_IAV", "Strong_Strong"
         based on the sentiments given to the input words by the Hardvard
         Inquirer lexicon.
+        Reference: http://www.wjh.harvard.edu/~inquirer/homecat.htm
         """
         corpus = self._get_corpus()
         result = []

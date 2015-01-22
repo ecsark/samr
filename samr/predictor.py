@@ -10,7 +10,7 @@ from sklearn.svm import SVC
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.pipeline import make_pipeline, make_union
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, mean_absolute_error
 
 from samr.transformations import (ExtractText, ReplaceText, MapToSynsets,
                                   Densifier, ClassifierOvOAsFeatures)
@@ -82,7 +82,7 @@ class PhraseSentimentPredictor:
               the main classifier. This can be useful for some slow main
               classifiers (ex: svc) that converge with less samples to an
               optimum.
-            - `max_to_lex`: Whether or not to use the Harvard Inquirer lexicon
+            - `map_to_lex`: Whether or not to use the Harvard Inquirer lexicon
               features.
             - `duplicates`: Whether or not to check for identical phrases between
               train and prediction.
@@ -148,11 +148,14 @@ class PhraseSentimentPredictor:
     def score(self, phrases):
         """
         `phrases` should be a list of `Datapoint` instances.
-        Return value is a `float` with the classification accuracy of the
-        input.
+        Return value is a (`float`,`float`) with the classification accuracy and 
+        deviation of the input.
         """
         pred = self.predict(phrases)
-        return accuracy_score(target(phrases), pred)
+        answer = [int(k) for k in target(phrases)]
+        guess = [int(k) for k in pred]
+        return accuracy_score(target(phrases), pred), mean_absolute_error(answer, guess)
+
 
     def error_matrix(self, phrases):
         predictions = self.predict(phrases)

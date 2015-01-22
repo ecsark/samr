@@ -6,9 +6,12 @@ scikit-learn documentation for the convension fit/transform convensions.
 import numpy
 import re
 
+from collections import defaultdict
 from sklearn.linear_model import SGDClassifier
 from sklearn.multiclass import fit_ovo
 import nltk
+
+from samr.data import Lexpoint, Splitpoint
 
 
 class StatelessTransform:
@@ -18,6 +21,7 @@ class StatelessTransform:
     """
     def fit(self, X, y=None):
         return self
+
 
 
 class ExtractText(StatelessTransform):
@@ -39,6 +43,96 @@ class ExtractText(StatelessTransform):
         if self.lowercase:
             return [x.lower() for x in it]
         return list(it)
+
+
+
+class BuildPhraseHierarchy(StatelessTransform):
+
+    def __init__(self, prior_dict={}):
+        self.phrase_by_len = defaultdict(list)
+
+        for text in prior_dict.keys():
+            self.phrase_by_len[len(text.split())].append(text)
+
+
+    def transform(self, X):     
+        """
+        `X` is expected to be a list of `str` instances.
+        Return value is also a list of `str` instances with the replacements
+        applied.
+        """
+        for text in X:
+            self.phrase_by_len[len(text.split())].append(text)
+
+        hdict = {}
+
+        for i in sorted(self.phrase_by_len.keys()):
+            for text in self.phrase_by_len[i]:
+                lphrase, rphrase, matched = self._find_subphrase(text)
+                hdict[text] = Splitpoint(lphrase, rphrase, matched)
+
+        return [hdict[x] for x in X]
+
+
+    def _find_subphrase(self, text):
+        phrases = text.split()
+
+        if len(phrases) == 1:
+            return phrases[0], '', 'LEFT|SINGLE'
+
+        for i in range(len(phrases)):
+            lphrase, rphrase = phrases[:i+1], phrases[i+1:]
+            if ' '.join(lphrase) in self.phrase_by_len[len(lphrase)] and ' '.join(rphrase) in self.phrase_by_len[len(rphrase)]:
+                return ' '.join(lphrase), ' '.join(rphrase), 'BOTH'
+
+        for i in range(1, len(phrases)):
+            lphrase = phrases[:i+1]
+            if ' '.join(lphrase) in self.phrase_by_len[len(lphrase)]:
+                return ' '.join(lphrase), '', 'LEFT'
+
+        for i in range(len(phrases)-1):
+            rphrase = phrases[i+1:]
+            if ' '.join(rphrase) in self.phrase_by_len[len(rphrase)]:
+                return '', ' '.join(rphrase), 'RIGHT'
+
+        return text, '', 'LEFT|UNKNOWN'
+
+
+class BuildLexHierarchy(StatelessTransform):
+
+    def __init__(self, prior_dict={}):
+        self.phrase_by_len = defaultdict(list)
+
+        for text in prior_dict.keys():
+            self.phrase_by_len[len(text.split())].append(text)
+
+
+    def transform(self, X):     
+
+        for text in X:
+            self.phrase_by_len[len(text.split())].append(text)
+
+        hdict = {}
+
+        for i in sorted(self.phrase_by_len.keys()):
+            for text in self.phrase_by_len[i]:
+                word, subphrase, pos = self._find_subphrase(text)
+                hdict[text] = Lexpoint(word, subphrase, pos)
+
+        return [hdict[x] for x in X]
+
+
+    def _find_subphrase(self, text):
+        word, subphrase, pos = text.split()[0], ' '.join(text.split()[1:]), 'LEFT'
+
+        if subphrase not in self.phrase_by_len[len(subphrase.split())]:
+            word, subphrase, pos = text.split()[-1], ' '.join(text.split()[:-1]), 'RIGHT'
+
+            if subphrase not in self.phrase_by_len[len(subphrase.split())]:
+                pos = 'DEFAULT'
+
+        return word, subphrase, pos
+
 
 
 class ReplaceText(StatelessTransform):
