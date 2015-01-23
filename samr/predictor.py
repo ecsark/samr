@@ -217,4 +217,4 @@ class _Baseline:
     def score(self, X):
         gold = target(X)
         pred = self.predict(X)
-        return accuracy_score(gold, pred)
+        return accuracy_score(gold, pred), mean_absolute_error(gold, pred)

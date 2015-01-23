@@ -1,5 +1,6 @@
 from collections import defaultdict
 
+import cPickle as pickle
 from nltk.tag import pos_tag
 from nltk.tokenize import word_tokenize
 
@@ -122,7 +123,7 @@ class ExtractPhraseSide(StatelessTransform):
         elif side.lower() == 'right':
             self.part = 'right'
         else:
-            raise Exception('Side should either be left or right')
+            raise Exception('side should either be left or right')
 
     def transform(self, X):
         """
@@ -182,17 +183,17 @@ class BuildPhrasePOS(StatelessTransform):
 
 
 class LazyPhrasePOS(StatelessTransform):
+    def __init__(self):
+        with open('/Users/ecsark/Projects/samr/postag.p', 'rb') as f:
+            self.postag = pickle.load(f)
+
     def transform(self, X, y=None):
         print 'POS Tagging...'
-        import cPickle as pickle
-
-        with open('/Users/ecsark/Projects/samr/postag.p', 'rb') as f:
-            postag = pickle.load(f)
 
         results = []
         for x in X:
-            if x in postag:
-                tag = postag[x]
+            if x in self.postag:
+                tag = self.postag[x]
             else:
                 tag = pos_tag(word_tokenize(x))
             results.append(tag)
@@ -205,7 +206,7 @@ class PhraseAllPOSFeature(StatelessTransform):
         return [[tag for (_, tag) in x] for x in X]
 
 
-class PhraseEdgeFeature(StatelessTransform):
+class PhraseEdgePosTag(StatelessTransform):
     def __init__(self, pos):
         self.pos = pos
 
@@ -213,5 +214,16 @@ class PhraseEdgeFeature(StatelessTransform):
         print 'Extracting Edge POS Tag...'
         results = []
         for x in X:
-            results.append({'pos': x[self.pos] if len(x) > self.pos and len(x) > 0 else 'NULL'})
+            results.append({'pos': x[self.pos] if len(x) > self.pos and len(x) > 0 else ''})
+        return results
+
+class PhraseEdgeWord(StatelessTransform):
+    def __init__(self, pos):
+        self.pos = pos
+
+    def transform(self, X, y=None):
+        print 'Extracting Edge Word...'
+        results = []
+        for x in X:
+            results.append({'word': x[self.pos] if len(x) > self.pos and len(x) > 0 else ''})
         return results

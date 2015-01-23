@@ -1,6 +1,6 @@
 """
 This module implements several scikit-learn compatible transformers, see
-scikit-learn documentation for the convension fit/transform convensions.
+scikit-learn documentation for the convention fit/transform conventions.
 """
 
 import numpy
@@ -37,7 +37,7 @@ class ExtractText(StatelessTransform):
         `X` is expected to be a list of `Datapoint` instances.
         Return value is a list of `str` instances in which words were tokenized
         and are separated by a single space " ". Optionally words are also
-        lowercased depending on the argument given at __init__.
+        lower-cased depending on the argument given at __init__.
         """
         it = (" ".join(nltk.word_tokenize(datapoint.phrase)) for datapoint in X)
         if self.lowercase:
@@ -81,7 +81,7 @@ class MapToSynsets(StatelessTransform):
         """
         `X` is expected to be a list of `str` instances.
         It returns a list of `str` instances such that the i-th element
-        containins the names of the synsets of all the words in `X[i]`,
+        contains the names of the synsets of all the words in `X[i]`,
         excluding noun synsets.
         `X[i]` is internally tokenized using `str.split`, so it should be
         formatted accordingly.
@@ -110,7 +110,7 @@ class Densifier(StatelessTransform):
 
 class ClassifierOvOAsFeatures:
     """
-    A transformation that esentially implement a form of dimensionality
+    A transformation that essentially implement a form of dimensionality
     reduction.
     This class uses a fast SGDClassifier configured like a linear SVM to produce
     a vector of decision functions separating target classes in a
