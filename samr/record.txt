@@ -9,11 +9,11 @@ RAFA
 
 
 
-
-
-
-
-
-len(lphrase), len(rphrase), sent(lphrase), sent(rphrase)
+subphrase length, subphrase sentiment, classifier
 ===================
-0.35140571222783717
+0.351452370782
+
+
+subphrase length, subphrase sentiment, subphrase edge pos, classifier
+===================
+0.372490388723
