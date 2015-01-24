@@ -26,7 +26,7 @@ _valid_classifiers = {
 
 
 def target(phrases):
-    return [datapoint.sentiment for datapoint in phrases]
+    return [int(datapoint.sentiment) for datapoint in phrases]
 
 
 class PhraseSentimentPredictor:

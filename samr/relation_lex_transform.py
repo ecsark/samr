@@ -3,6 +3,7 @@ from collections import defaultdict
 import cPickle as pickle
 from nltk.tag import pos_tag
 from nltk.tokenize import word_tokenize
+from samr.predictor import PhraseSentimentPredictor
 
 from samr.transformations import StatelessTransform
 from samr.data import *
@@ -31,6 +32,7 @@ class BuildSubPhrase(StatelessTransform):
 
         return [hdict[x.phrase] for x in X]
 
+
     def _find_subphrase(self, phrase):
         phrases = phrase.split()
 
@@ -52,71 +54,7 @@ class BuildSubPhrase(StatelessTransform):
         return phrase, '', 'LEFT|UNKNOWN'
 
 
-class BuildSubPhrase2():
-    def __init__(self, prior_dict={}, default_sentiment=2, verbose=False):
-        self.phrase_by_len = defaultdict(list)
-
-        for text in prior_dict.keys():
-            self.phrase_by_len[len(text.split())].append(text)
-
-        self.default_sentiment = default_sentiment
-        self.verbose = verbose
-
-    def fit(self, X, y):
-        self.sentiment_bank = {}
-        for (datapoint, sentiment) in zip(X, y):
-            self.sentiment_bank[datapoint.phrase] = sentiment
-
-        return self
-
-    def _find_sentiment(self, text):
-        assert (isinstance(text, str))
-
-        if text in self.sentiment_bank:
-            return self.sentiment_bank[text]
-        return self.default_sentiment
-
-    def transform(self, X):
-        for datapoint in X:
-            text = datapoint.phrase
-            self.phrase_by_len[len(text.split())].append(text)
-
-        hdict = {}
-
-        for i in sorted(self.phrase_by_len.keys()):
-            for text in self.phrase_by_len[i]:
-                lphrase, rphrase, matched = self._find_subphrase(text)
-                hdict[text] = Sentimentpoint(lphrase, rphrase, self._find_sentiment(lphrase),
-                                             self._find_sentiment(rphrase))
-
-        return [hdict[x.phrase] for x in X]
-
-    def _find_subphrase(self, text):
-        phrases = text.split()
-
-        if len(phrases) == 1:
-            return phrases[0], '', 'LEFT|SINGLE'
-
-        for i in range(len(phrases)):
-            lphrase, rphrase = phrases[:i + 1], phrases[i + 1:]
-            if ' '.join(lphrase) in self.phrase_by_len[len(lphrase)] and ' '.join(rphrase) in self.phrase_by_len[
-                len(rphrase)]:
-                return ' '.join(lphrase), ' '.join(rphrase), 'BOTH'
-
-        for i in range(1, len(phrases)):
-            lphrase = phrases[:i + 1]
-            if ' '.join(lphrase) in self.phrase_by_len[len(lphrase)]:
-                return ' '.join(lphrase), '', 'LEFT'
-
-        for i in range(len(phrases) - 1):
-            rphrase = phrases[i + 1:]
-            if ' '.join(rphrase) in self.phrase_by_len[len(rphrase)]:
-                return '', ' '.join(rphrase), 'RIGHT'
-
-        return text, '', 'LEFT|UNKNOWN'
-
-
-class ExtractPhraseSide(StatelessTransform):
+class ExtractSidePhrase(StatelessTransform):
     def __init__(self, side):
         if side.lower() == 'left':
             self.part = 'left'
@@ -154,10 +92,20 @@ class PhraseLengthFeature(StatelessTransform):
         return [(len(x.split()),) for x in X]
 
 
-class PhraseSentimentFeature(StatelessTransform):
-    def __init__(self, default_sentiment=2, prior_sentiment_dict={}):
+class PhraseSentimentFeature():
+    def __init__(self, default_sentiment=2, prior_sentiment_dict=None, fit_overwrite=True):
+        if not prior_sentiment_dict:
+            prior_sentiment_dict = {}
+        self.prior_tagged = set(prior_sentiment_dict.keys())
         self.sentiment_dict = prior_sentiment_dict
         self.default_sentiment = default_sentiment
+        self.fit_overwrite = fit_overwrite
+
+    def fit(self, X, y):
+        for x, sent in zip(X, y):
+            if self.fit_overwrite or x not in self.prior_tagged:
+                self.sentiment_dict[x] = sent
+        return self
 
     def _get_sentiment(self, x):
         if x in self.sentiment_dict:
@@ -208,6 +156,7 @@ class PhraseAllPOSFeature(StatelessTransform):
 
 class PhraseEdgePosTag(StatelessTransform):
     def __init__(self, pos):
+        assert(isinstance(pos, int))
         self.pos = pos
 
     def transform(self, X, y=None):
@@ -217,8 +166,10 @@ class PhraseEdgePosTag(StatelessTransform):
             results.append({'pos': x[self.pos] if len(x) > self.pos and len(x) > 0 else ''})
         return results
 
+
 class PhraseEdgeWord(StatelessTransform):
     def __init__(self, pos):
+        assert(isinstance(pos, int))
         self.pos = pos
 
     def transform(self, X, y=None):
@@ -227,3 +178,6 @@ class PhraseEdgeWord(StatelessTransform):
         for x in X:
             results.append({'word': x[self.pos] if len(x) > self.pos and len(x) > 0 else ''})
         return results
+
+
+

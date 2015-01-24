@@ -3,6 +3,7 @@ import random
 from sklearn.metrics import mean_absolute_error
 
 from samr.corpus import iter_corpus
+from samr.predictor import DuplicatesHandler
 from samr.transformations import ClassifierOvOAsFeatures
 
 raw_set = list(iter_corpus())
@@ -10,6 +11,7 @@ raw_set = list(iter_corpus())
 use_pct = int(0.3 * len(raw_set))
 
 data_set = raw_set[:use_pct]
+gold_ans = [int(d.sentiment) for d in data_set]
 
 train_num = int(0.9 * len(data_set))
 
@@ -17,85 +19,172 @@ rand = random.Random()
 rand.seed(4721)
 rand.shuffle(data_set)
 
-y = [int(d.sentiment) for d in data_set]
+
+
 
 #####################################
 
 from samr.relation_lex_transform import *
 from sklearn.pipeline import Pipeline, FeatureUnion, make_pipeline, make_union
-from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_extraction import DictVectorizer
 
+"""
 sentiment_bank = {}
 for d in data_set:
     sentiment_bank[d.phrase] = d.sentiment
-
+"""
 phrase_bank = [x.phrase for x in data_set]
+
+point_dict = {}
+for d in data_set:
+    point_dict[d.phrase] = d
+
+
+class AugmentedPredictor():
+    def __init__(self, duplicates=True):
+        self.left_predictor = PhraseSentimentPredictor(classifier="randomforest", map_to_synsets=False, duplicates=False)
+        self.right_predictor = PhraseSentimentPredictor(classifier="randomforest", map_to_synsets=False, duplicates=False)
+        self.this_predictor = PhraseSentimentPredictor(classifier="randomforest", map_to_synsets=False, duplicates=False)
+        self.duplicates = duplicates
+        """
+        self.pipeline = Pipeline([
+            ('split_phrase', BuildSubPhrase(prior_phrase=phrase_bank)),
+            ('features', FeatureUnion([
+                ('match_pipeline', Pipeline([
+                    ('matched', SubPhraseMatched()),
+                    ('m_to_dict', DictVectorizer(sparse=False)),
+                    ])),
+                ('left_features', self.build_sub_phrase_feature('left')),
+                ('right_features', self.build_sub_phrase_feature('right')),
+                ]))
+        ])
+        """
+        self.classifier = RandomForestClassifier(n_estimators=100, min_samples_leaf=10, n_jobs=-1)
+
+    def adapt_phrase_to_point(self, X):
+        phrase_to_point = {}
+        for x in X:
+            phrase_to_point[x.phrase] = x
+        return phrase_to_point
+
+
+    def phrase_to_point(self, X):
+        return [Datapoint(None, None, x, None) for x in X]
+
+    def fit(self, X, y=None):
+        y = [int(x.sentiment) for x in X]
+
+        if self.duplicates:
+            self.dupes = DuplicatesHandler()
+            self.dupes.fit(X, y)
+
+        self.left_predictor.fit(X)
+        self.right_predictor.fit(X)
+        # self.this_predictor.fit(X)
+
+        P = self.this_predictor.pipeline.fit_transform(X, y)
+
+        W = BuildSubPhrase(prior_phrase=phrase_bank).transform(X)
+
+        self.matched_ppl = make_pipeline(SubPhraseMatched(), DictVectorizer(sparse=False))
+        matched = self.matched_ppl.fit_transform(W, y)
+
+        self.left_extract = ExtractSidePhrase('left')
+        self.right_extract = ExtractSidePhrase('right')
+        L = self.left_extract.transform(W)
+        R = self.right_extract.transform(W)
+
+        left_y = self.left_predictor.predict(self.phrase_to_point(L))
+        right_y = self.right_predictor.predict(self.phrase_to_point(R))
+
+        self.left_phr_ppl = self.build_sub_phrase_feature()
+        self.right_phr_ppl = self.build_sub_phrase_feature()
+
+        self.left_pos_ppl = self.build_edge_pos_feature('left')
+        self.right_pos_ppl = self.build_edge_pos_feature('right')
+
+        left_phr_feat = self.left_phr_ppl.fit_transform(L, left_y)
+        right_phr_feat = self.right_phr_ppl.fit_transform(R, right_y)
+
+        left_pos_feat = self.left_pos_ppl.fit_transform(L, y)
+        right_pos_feat = self.right_pos_ppl.fit_transform(R, y)
+
+        Z = self.pack_feature([matched, left_phr_feat, left_pos_feat, right_phr_feat, right_pos_feat, P])
+
+        Z = [f + [int(f[6]) - int(f[18]), int(f[6]) + int(f[18])] for f in Z]  # sentiment difference, sentiment strength
+        self.classifier.fit(Z, y)
+        return self
+
+    def predict(self, X):
+        P = self.this_predictor.pipeline.transform(X)
+
+        W = BuildSubPhrase(prior_phrase=phrase_bank).transform(X)
+        matched = self.matched_ppl.transform(W)
+
+        L = self.left_extract.transform(W)
+        R = self.right_extract.transform(W)
+
+        left_y = self.left_predictor.predict(self.phrase_to_point(L))
+        right_y = self.right_predictor.predict(self.phrase_to_point(R))
+
+        left_phr_feat = self.left_phr_ppl.fit_transform(L, left_y)
+        right_phr_feat = self.right_phr_ppl.fit_transform(R, right_y)
+
+        left_pos_feat = self.left_pos_ppl.transform(L)
+        right_pos_feat = self.right_pos_ppl.transform(R)
+
+        Z = self.pack_feature([matched, left_phr_feat, left_pos_feat, right_phr_feat, right_pos_feat, P])
+
+        Z = [f + [int(f[6]) - int(f[18]), int(f[6]) + int(f[18])] for f in Z]  # sentiment difference, sentiment strength
+        y = self.classifier.predict(Z)
+        if self.duplicates:
+            for i, phrase in enumerate(X):
+                label = self.dupes.get(phrase)
+                if label is not None:
+                    y[i] = label
+        return y
+
+    def pack_feature(self, features_list):
+        packed = []
+        for i in range(len(features_list[0])):
+            packed.append([x for f in features_list for x in f[i]])
+        return packed
+
+    def build_edge_pos_feature(self, side):
+        if side.lower() == 'left':
+            position = -1
+        elif side.lower() == 'right':
+            position = 0
+        else:
+            raise Exception('side should either be left or right')
+        return make_pipeline(
+            LazyPhrasePOS(),
+            PhraseAllPOSFeature(),
+            PhraseEdgePosTag(position),
+            DictVectorizer(),
+            ClassifierOvOAsFeatures()
+        )
+
+    def build_sub_phrase_feature(self, prior_sent_dict=None):
+        return make_union(PhraseLengthFeature(),
+                          PhraseSentimentFeature(prior_sentiment_dict=prior_sent_dict))
+
+
+train_set, dev_set = data_set[:train_num], data_set[train_num:]
+train_ans, dev_ans = gold_ans[:train_num], gold_ans[train_num:]
+
+predictor = AugmentedPredictor()
+predictor.fit(train_set)
+prediction = predictor.predict(dev_set)
+
+print mean_absolute_error(dev_ans, prediction)
+
 """
-split_phrase = BuildSubPhrase(prior_phrase=phrase_bank).transform(data_set)
-matched = DictVectorizer(sparse=False).transform(SubPhraseMatched().transform(split_phrase))
-
-left_extract = ExtractPhraseSide('left').transform(split_phrase)
-right_extract = ExtractPhraseSide('right').transform(split_phrase)
-
-phrase_len_feature = PhraseLengthFeature()
-left_len = phrase_len_feature.transform(left_extract)
-right_len = phrase_len_feature.transform(right_extract)
-
-phrase_sentiment_feature = PhraseSentimentFeature(prior_sentiment_dict=sentiment_bank)
-left_sent = phrase_sentiment_feature.transform(left_extract)
-right_sent = phrase_sentiment_feature.transform(right_extract)
-
-phrase_pos_tagger = LazyPhrasePOS()
-phrase_pos_tag_only = PhraseAllPOSFeature()
-left_phrase_pos = phrase_pos_tag_only.transform(phrase_pos_tagger.transform(left_extract))
-left_pos_vec = DictVectorizer(sparse=False).fit_transform(PhraseEdgeFeature(-1).transform(left_phrase_pos))
-right_phrase_pos = phrase_pos_tag_only.transform(phrase_pos_tagger.transform(right_extract))
-right_pos_vec = DictVectorizer(sparse=False).fit_transform(PhraseEdgeFeature(0).transform(right_phrase_pos))
-"""
-
-
-def _build_edge_pos_feature(side):
-    if side.lower() == 'left':
-        position = -1
-    elif side.lower() == 'right':
-        position = 0
-    else:
-        raise Exception('side should either be left or right')
-    return make_pipeline(
-        LazyPhrasePOS(),
-        PhraseAllPOSFeature(),
-        PhraseEdgePosTag(position),
-        DictVectorizer(),
-        ClassifierOvOAsFeatures()
-    )
-
-
-def build_sub_phrase_feature(side):
-    if side.lower() not in ['left', 'right']:
-        raise Exception('side should either be left or right')
-    return make_pipeline(ExtractPhraseSide(side),
-                         make_union(PhraseLengthFeature(),
-                                    PhraseSentimentFeature(prior_sentiment_dict=sentiment_bank),
-                                    _build_edge_pos_feature(side))
-    )
-
-
-pipeline = Pipeline([
-    ('split_phrase', BuildSubPhrase(prior_phrase=phrase_bank)),
-    ('features', FeatureUnion([
-        ('match_pipeline', Pipeline([
-            ('matched', SubPhraseMatched()),
-            ('m_to_dict', DictVectorizer(sparse=False)),
-        ])),
-        ('left_features', build_sub_phrase_feature('left')),
-        ('right_features', build_sub_phrase_feature('right')),
-    ]))
-])
-
 Z = pipeline.fit_transform(data_set, y)
 
-Z = [f.tolist() + [int(f[6])-int(f[18]), int(f[6])+int(f[18])] for f in Z]  # sentiment difference, sentiment strength
+Z = [f.tolist() + [int(f[6]) - int(f[18]), int(f[6]) + int(f[18])] for f in
+     Z]  # sentiment difference, sentiment strength
 
 train_set, dev_set = Z[:train_num], Z[train_num:]
 train_ans, dev_ans = y[:train_num], y[train_num:]
@@ -107,3 +196,4 @@ classifier.fit(train_set, train_ans)
 dev_guess = classifier.predict(dev_set)
 
 print mean_absolute_error(dev_guess, dev_ans)
+"""
