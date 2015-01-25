@@ -144,7 +144,9 @@ class LazyPhrasePOS(StatelessTransform):
                 tag = self.postag[x]
             else:
                 tag = pos_tag(word_tokenize(x))
+                self.postag[x] = tag
             results.append(tag)
+        pickle.dump(self.postag, open('/Users/ecsark/Projects/samr/postag.p', 'wb'))
         return results
 
 

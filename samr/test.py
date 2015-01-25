@@ -1,23 +1,27 @@
+import csv
 import random
 
 from sklearn.metrics import mean_absolute_error
 
-from samr.corpus import iter_corpus
+from samr.corpus import iter_corpus, iter_test_corpus
 from samr.predictor import DuplicatesHandler
 from samr.transformations import ClassifierOvOAsFeatures
 
 raw_set = list(iter_corpus())
+test_set = list(iter_test_corpus())
 
-use_pct = int(0.3 * len(raw_set))
+#use_pct = int(0.3 * len(raw_set))
+use_pct = len(raw_set)
 
 data_set = raw_set[:use_pct]
 gold_ans = [int(d.sentiment) for d in data_set]
 
-train_num = int(0.9 * len(data_set))
+# train_num = int(0.9 * len(data_set))
+train_num = len(data_set)
 
-rand = random.Random()
-rand.seed(4721)
-rand.shuffle(data_set)
+# rand = random.Random()
+# rand.seed(4721)
+# rand.shuffle(data_set)
 
 
 
@@ -28,13 +32,14 @@ from samr.relation_lex_transform import *
 from sklearn.pipeline import Pipeline, FeatureUnion, make_pipeline, make_union
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_extraction import DictVectorizer
-
+import numpy
 """
 sentiment_bank = {}
 for d in data_set:
     sentiment_bank[d.phrase] = d.sentiment
 """
 phrase_bank = [x.phrase for x in data_set]
+test_phrase_bank = [x.phrase for x in test_set]
 
 point_dict = {}
 for d in data_set:
@@ -42,10 +47,16 @@ for d in data_set:
 
 
 class AugmentedPredictor():
-    def __init__(self, duplicates=True):
-        self.left_predictor = PhraseSentimentPredictor(classifier="randomforest", map_to_synsets=False, duplicates=False)
-        self.right_predictor = PhraseSentimentPredictor(classifier="randomforest", map_to_synsets=False, duplicates=False)
-        self.this_predictor = PhraseSentimentPredictor(classifier="randomforest", map_to_synsets=False, duplicates=False)
+    def __init__(self, duplicates=False):
+        self.left_predictor = PhraseSentimentPredictor(classifier="randomforest", map_to_synsets=True,
+                                                       map_to_lex=True, duplicates=True,
+                                                       classifier_args={"n_estimators": 100, "min_samples_leaf":10, "n_jobs":-1})
+        self.right_predictor = PhraseSentimentPredictor(classifier="randomforest", map_to_synsets=True,
+                                                        map_to_lex=True, duplicates=True,
+                                                        classifier_args={"n_estimators": 100, "min_samples_leaf":10, "n_jobs":-1})
+        self.this_predictor = PhraseSentimentPredictor(classifier="randomforest", map_to_synsets=True,
+                                                       map_to_lex=True, duplicates=True,
+                                                       classifier_args={"n_estimators": 100, "min_samples_leaf":10, "n_jobs":-1})
         self.duplicates = duplicates
         """
         self.pipeline = Pipeline([
@@ -61,6 +72,7 @@ class AugmentedPredictor():
         ])
         """
         self.classifier = RandomForestClassifier(n_estimators=100, min_samples_leaf=10, n_jobs=-1)
+        self.decider = RandomForestClassifier(n_estimators=100, min_samples_leaf=10, n_jobs=-1)
 
     def adapt_phrase_to_point(self, X):
         phrase_to_point = {}
@@ -72,6 +84,9 @@ class AugmentedPredictor():
     def phrase_to_point(self, X):
         return [Datapoint(None, None, x, None) for x in X]
 
+    def tuple_to_vector(self, X):
+        return [(x,) for x in X]
+
     def fit(self, X, y=None):
         y = [int(x.sentiment) for x in X]
 
@@ -81,9 +96,10 @@ class AugmentedPredictor():
 
         self.left_predictor.fit(X)
         self.right_predictor.fit(X)
-        # self.this_predictor.fit(X)
+        self.this_predictor.fit(X)
 
         P = self.this_predictor.pipeline.fit_transform(X, y)
+        P = [list(numpy.array(p).reshape(-1)) for p in P]
 
         W = BuildSubPhrase(prior_phrase=phrase_bank).transform(X)
 
@@ -110,16 +126,21 @@ class AugmentedPredictor():
         left_pos_feat = self.left_pos_ppl.fit_transform(L, y)
         right_pos_feat = self.right_pos_ppl.fit_transform(R, y)
 
-        Z = self.pack_feature([matched, left_phr_feat, left_pos_feat, right_phr_feat, right_pos_feat, P])
+        Z = self.pack_feature([matched, left_phr_feat, left_pos_feat, right_phr_feat, right_pos_feat])
 
         Z = [f + [int(f[6]) - int(f[18]), int(f[6]) + int(f[18])] for f in Z]  # sentiment difference, sentiment strength
         self.classifier.fit(Z, y)
+
+        U = self.pack_feature([P, Z])
+        self.decider.fit(U, y)
         return self
 
     def predict(self, X):
-        P = self.this_predictor.pipeline.transform(X)
 
-        W = BuildSubPhrase(prior_phrase=phrase_bank).transform(X)
+        P = self.this_predictor.pipeline.transform(X)
+        P = [list(numpy.array(p).reshape(-1)) for p in P]
+
+        W = BuildSubPhrase(prior_phrase=test_phrase_bank).transform(X)
         matched = self.matched_ppl.transform(W)
 
         L = self.left_extract.transform(W)
@@ -134,10 +155,14 @@ class AugmentedPredictor():
         left_pos_feat = self.left_pos_ppl.transform(L)
         right_pos_feat = self.right_pos_ppl.transform(R)
 
-        Z = self.pack_feature([matched, left_phr_feat, left_pos_feat, right_phr_feat, right_pos_feat, P])
+        Z = self.pack_feature([matched, left_phr_feat, left_pos_feat, right_phr_feat, right_pos_feat])
 
         Z = [f + [int(f[6]) - int(f[18]), int(f[6]) + int(f[18])] for f in Z]  # sentiment difference, sentiment strength
-        y = self.classifier.predict(Z)
+        # y = self.classifier.predict(Z)
+
+        U = self.pack_feature([P, Z])
+        y = self.decider.predict(U)
+
         if self.duplicates:
             for i, phrase in enumerate(X):
                 label = self.dupes.get(phrase)
@@ -176,9 +201,22 @@ train_ans, dev_ans = gold_ans[:train_num], gold_ans[train_num:]
 
 predictor = AugmentedPredictor()
 predictor.fit(train_set)
-prediction = predictor.predict(dev_set)
+# prediction = predictor.predict(dev_set)
 
-print mean_absolute_error(dev_ans, prediction)
+prediction = predictor.predict(test_set)
+
+#print mean_absolute_error(dev_ans, prediction)
+
+def make_submission(test_set, prediction):
+    f = open('/Users/ecsark/Projects/samr/submission/submission.csv', 'wb')
+    writer = csv.writer(f)
+    writer.writerow(("PhraseId", "Sentiment"))
+    for datapoint, sentiment in zip(test_set, prediction):
+        writer.writerow((datapoint.phraseid, sentiment))
+    f.close()
+
+
+make_submission(test_set, prediction)
 
 """
 Z = pipeline.fit_transform(data_set, y)
